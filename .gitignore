@@ -22,9 +22,6 @@ ENV/
 # Application specific
 presets.json
 *.log
-screenshots/*.png
-screenshots/*.jpg
-screenshots/*.jpeg
 
 # Operating System
 .DS_Store
