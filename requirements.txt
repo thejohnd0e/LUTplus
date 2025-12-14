@@ -1,6 +1,6 @@
 gradio==4.19.2
-huggingface-hub==0.23.5
 numpy==1.26.4
 opencv-python==4.9.0.80
 Pillow==10.2.0
 colour-science==0.4.3
+huggingface-hub==0.20.0
