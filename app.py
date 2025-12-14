@@ -912,6 +912,38 @@ with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
         outputs=batch_result
     )
 
+
+def get_local_ip_address():
+    """Return a best-guess LAN IP address or an informative fallback string."""
+    possible_ips = []
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            possible_ips.append(sock.getsockname()[0])
+    except Exception:
+        pass
+
+    if not possible_ips:
+        try:
+            hostname = socket.gethostname()
+            ips = socket.getaddrinfo(hostname, None)
+            for ip in ips:
+                if ip[0] == socket.AF_INET:
+                    addr = ip[4][0]
+                    if not addr.startswith('127.'):
+                        possible_ips.append(addr)
+        except Exception:
+            pass
+
+    if not possible_ips:
+        return "unknown (check your network)"
+
+    for ip in possible_ips:
+        if ip.startswith('192.168.') or ip.startswith('10.'):
+            return ip
+
+    return possible_ips[0]
     with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
         gr.Markdown("# LUTplus - Image PostProcessing Tools")
         gr.Markdown("Upload an image and apply various effects to it.")
@@ -1029,6 +1061,7 @@ def main():
 
     if is_network_mode:
         try:
+            local_ip = get_local_ip_address()
             # Better method to get local IP address
             def get_local_ip():
                 # Get all network interfaces that might be accessible from other devices
@@ -1082,14 +1115,13 @@ def main():
     demo = build_demo()
 
     try:
-        # Launch the application
         demo.launch(
-            quiet=True,  # Disable Gradio messages, including version warning
+            quiet=True,
             show_error=True,
             show_api=False,
-            server_name=server_ip,  # Use 0.0.0.0 for network access or 127.0.0.1 for local only
-            inbrowser=True,  # Enable automatic browser launch
-            share=False  # Disable public URL
+            server_name=server_ip,
+            inbrowser=True,
+            share=False
         )
     except Exception as e:
         print(f"\nError: {str(e)}")
