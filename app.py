@@ -11,6 +11,14 @@ import time
 import sys
 import subprocess
 
+try:
+    import torch
+
+    TORCH_AVAILABLE = True
+except Exception:
+    torch = None
+    TORCH_AVAILABLE = False
+
 # Disable Gradio update checks
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 os.environ["GRADIO_TELEMETRY_ENABLED"] = "False"
@@ -291,10 +299,197 @@ def adjust_gamma(image, gamma):
 def adjust_contrast(image, factor):
     if image is None or factor == 1.0:
         return image
-    
+
     mean = np.mean(image)
     adjusted = cv2.addWeighted(image, factor, image, 0, mean * (1 - factor))
     return np.clip(adjusted, 0, 255).astype(np.uint8)
+
+
+def gpu_available():
+    """Check if PyTorch with CUDA is available."""
+    if not TORCH_AVAILABLE:
+        return False, "PyTorch not installed"
+    if torch.cuda.is_available():
+        try:
+            device_name = torch.cuda.get_device_name(torch.cuda.current_device())
+        except Exception:
+            device_name = "CUDA device"
+        return True, device_name
+    return False, "CUDA not detected"
+
+
+def to_torch_image(image, device):
+    tensor = torch.as_tensor(image, dtype=torch.float32, device=device)
+    if tensor.ndim == 3:
+        return tensor
+    return tensor.view(*image.shape)
+
+
+def torch_gaussian_kernel(kernel_size: int, sigma: float, device):
+    coords = torch.arange(kernel_size, device=device) - (kernel_size - 1) / 2
+    grid = coords ** 2
+    kernel_1d = torch.exp(-grid / (2 * sigma ** 2))
+    kernel_1d /= kernel_1d.sum()
+    kernel_2d = torch.outer(kernel_1d, kernel_1d)
+    kernel_2d = kernel_2d.expand(3, 1, kernel_size, kernel_size)
+    return kernel_2d
+
+
+def torch_gaussian_blur(image, kernel_size):
+    if kernel_size <= 1:
+        return image
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    sigma = kernel_size / 6.0
+    kernel = torch_gaussian_kernel(kernel_size, sigma, image.device)
+    img = image.permute(2, 0, 1).unsqueeze(0)  # NCHW
+    padding = kernel_size // 2
+    blurred = torch.nn.functional.conv2d(img, kernel, padding=padding, groups=3)
+    return blurred.squeeze(0).permute(1, 2, 0)
+
+
+def torch_adjust_saturation(image, factor):
+    if factor == 1.0:
+        return image
+    img = image / 255.0
+    maxc, _ = img.max(dim=2)
+    minc, _ = img.min(dim=2)
+    delta = maxc - minc
+    s = torch.zeros_like(maxc)
+    non_zero = maxc != 0
+    s[non_zero] = delta[non_zero] / maxc[non_zero]
+
+    # Compute hue
+    r, g, b = img.unbind(-1)
+    h = torch.zeros_like(maxc)
+    mask = delta != 0
+    r_eq_max = (maxc == r) & mask
+    g_eq_max = (maxc == g) & mask
+    b_eq_max = (maxc == b) & mask
+    h[r_eq_max] = ((g - b) / delta % 6)[r_eq_max]
+    h[g_eq_max] = ((b - r) / delta + 2)[g_eq_max]
+    h[b_eq_max] = ((r - g) / delta + 4)[b_eq_max]
+    h = h / 6
+
+    s = torch.clamp(s * factor, 0, 1)
+
+    i = torch.floor(h * 6).long()
+    f = h * 6 - i
+    p = maxc * (1 - s)
+    q = maxc * (1 - f * s)
+    t = maxc * (1 - (1 - f) * s)
+
+    i_mod = i % 6
+    conditions = [
+        (i_mod == 0, torch.stack([maxc, t, p], dim=-1)),
+        (i_mod == 1, torch.stack([q, maxc, p], dim=-1)),
+        (i_mod == 2, torch.stack([p, maxc, t], dim=-1)),
+        (i_mod == 3, torch.stack([p, q, maxc], dim=-1)),
+        (i_mod == 4, torch.stack([t, p, maxc], dim=-1)),
+        (i_mod == 5, torch.stack([maxc, p, q], dim=-1)),
+    ]
+
+    rgb = torch.zeros_like(img)
+    for condition, value in conditions:
+        rgb = torch.where(condition.unsqueeze(-1), value, rgb)
+    return torch.clamp(rgb * 255.0, 0, 255)
+
+
+def apply_lut_torch(image, table, intensity):
+    size = table.shape[0]
+    img = image.float() / 255.0
+    h, w, _ = img.shape
+    coords = torch.clamp(img * (size - 1), 0, size - 1)
+    coords_floor = torch.floor(coords).long()
+    coords_ceil = torch.clamp(coords_floor + 1, max=size - 1)
+    weights = coords - coords_floor.float()
+
+    xf, yf, zf = coords_floor.unbind(-1)
+    xc, yc, zc = coords_ceil.unbind(-1)
+    wx, wy, wz = weights.unbind(-1)
+
+    v000 = table[xf, yf, zf]
+    v001 = table[xf, yf, zc]
+    v010 = table[xf, yc, zf]
+    v011 = table[xf, yc, zc]
+    v100 = table[xc, yf, zf]
+    v101 = table[xc, yf, zc]
+    v110 = table[xc, yc, zf]
+    v111 = table[xc, yc, zc]
+
+    v00 = v000 * (1 - wx.unsqueeze(-1)) + v100 * wx.unsqueeze(-1)
+    v01 = v001 * (1 - wx.unsqueeze(-1)) + v101 * wx.unsqueeze(-1)
+    v10 = v010 * (1 - wx.unsqueeze(-1)) + v110 * wx.unsqueeze(-1)
+    v11 = v011 * (1 - wx.unsqueeze(-1)) + v111 * wx.unsqueeze(-1)
+
+    v0 = v00 * (1 - wy.unsqueeze(-1)) + v10 * wy.unsqueeze(-1)
+    v1 = v01 * (1 - wy.unsqueeze(-1)) + v11 * wy.unsqueeze(-1)
+
+    result = v0 * (1 - wz.unsqueeze(-1)) + v1 * wz.unsqueeze(-1)
+
+    if intensity < 1.0:
+        result = img * (1 - intensity) + result * intensity
+
+    return torch.clamp(result * 255.0, 0, 255)
+
+
+def process_image_torch(image, color_noise, mono_noise, gauss_noise, digital_grain,
+                        blur_kernel, brightness, contrast, saturation, temperature,
+                        gamma, lut_file, lut_intensity, device):
+    result = to_torch_image(image, device)
+
+    if color_noise > 0:
+        noise = torch.normal(0, float(color_noise), size=result.shape, device=device)
+        result = torch.clamp(result + noise, 0, 255)
+
+    if mono_noise > 0:
+        noise = torch.normal(0, float(mono_noise), size=result.shape[:2], device=device)
+        noise = noise.unsqueeze(-1).expand_as(result)
+        result = torch.clamp(result + noise, 0, 255)
+
+    if gauss_noise > 0:
+        noise = torch.normal(0, float(gauss_noise), size=result.shape, device=device)
+        result = torch.clamp(result + noise, 0, 255)
+
+    if digital_grain > 0:
+        grain = torch.empty(result.shape[:2], device=device).uniform_(-digital_grain, digital_grain)
+        grain = torch.where(grain > digital_grain / 2, digital_grain, -digital_grain)
+        grain_color = torch.stack([grain, grain * 0.5, grain * 0.5], dim=-1)
+        result = torch.clamp(result + grain_color, 0, 255)
+
+    if blur_kernel > 1:
+        result = torch_gaussian_blur(result, blur_kernel)
+
+    if brightness != 1.0:
+        result = torch.clamp(result * brightness, 0, 255)
+
+    if contrast != 1.0:
+        mean = result.mean()
+        result = torch.clamp(result * contrast + mean * (1 - contrast), 0, 255)
+
+    if saturation != 1.0:
+        result = torch_adjust_saturation(result, saturation)
+
+    if temperature != 0:
+        result = result.clone()
+        if temperature > 0:
+            result[..., 0] = torch.clamp(result[..., 0] * (1 + temperature / 100), 0, 255)
+            result[..., 2] = torch.clamp(result[..., 2] * (1 - temperature / 200), 0, 255)
+        else:
+            temp = abs(temperature)
+            result[..., 2] = torch.clamp(result[..., 2] * (1 + temp / 100), 0, 255)
+            result[..., 0] = torch.clamp(result[..., 0] * (1 - temp / 200), 0, 255)
+
+    if gamma != 1.0:
+        gamma = max(0.01, gamma)
+        inv_gamma = 1.0 / gamma
+        result = torch.clamp((result / 255.0) ** inv_gamma * 255.0, 0, 255)
+
+    if lut_file is not None:
+        table = torch.tensor(read_3dl_lut(lut_file.name), device=device, dtype=torch.float32)
+        result = apply_lut_torch(result, table, lut_intensity)
+
+    return result.detach().cpu().numpy().astype(np.uint8)
 
 def read_3dl_lut(file_path):
     """Read a .3dl LUT file and return the lookup table."""
@@ -394,30 +589,33 @@ def apply_lut(image, lut_file, intensity=1.0):
     return result
 
 def process_image(image, color_noise, mono_noise, gauss_noise, digital_grain,
-                 blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity=0.5):
+                 blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file,
+                 lut_intensity=0.5, use_gpu=False):
     if image is None:
         return None
 
+    gpu_enabled, _ = gpu_available()
+    if use_gpu and gpu_enabled:
+        device = torch.device("cuda")
+        return process_image_torch(
+            np.array(image),
+            color_noise,
+            mono_noise,
+            gauss_noise,
+            digital_grain,
+            blur_kernel,
+            brightness,
+            contrast,
+            saturation,
+            temperature,
+            gamma,
+            lut_file,
+            lut_intensity,
+            device,
+        )
+
     result = np.array(image)
 
-    logger.info(
-        "Processing image (GPU=%s) | noise: color=%s mono=%s gauss=%s digital=%s | blur=%s | "
-        "adjust: brightness=%.2f contrast=%.2f saturation=%.2f temp=%s gamma=%.2f | lut=%s intensity=%.2f",
-        GPU_ENABLED,
-        color_noise,
-        mono_noise,
-        gauss_noise,
-        digital_grain,
-        blur_kernel,
-        brightness,
-        contrast,
-        saturation,
-        temperature,
-        gamma,
-        lut_file.name if lut_file else None,
-        lut_intensity,
-    )
-    
     # Apply different types of noise
     if color_noise > 0:
         result = apply_color_noise(result, color_noise)
@@ -427,28 +625,28 @@ def process_image(image, color_noise, mono_noise, gauss_noise, digital_grain,
         result = apply_gaussian_noise(result, gauss_noise)
     if digital_grain > 0:
         result = apply_digital_grain(result, digital_grain)
-    
+
     if blur_kernel > 1:
         result = apply_gaussian_blur(result, blur_kernel)
-    
+
     if brightness != 1.0:
         result = adjust_brightness(result, brightness)
-        
+
     if contrast != 1.0:
         result = adjust_contrast(result, contrast)
-    
+
     if saturation != 1.0:
         result = adjust_saturation(result, saturation)
-    
+
     if temperature != 0:
         result = adjust_color_temperature(result, temperature)
-        
+
     if gamma != 1.0:
         result = adjust_gamma(result, gamma)
-    
+
     if lut_file is not None:
         result = apply_lut(result, lut_file, lut_intensity)
-    
+
     return result
 
 def reset_controls():
@@ -468,7 +666,8 @@ def reset_controls():
     ]
 
 def process_batch(input_dir, output_dir, color_noise, mono_noise, gauss_noise, digital_grain,
-                blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity=0.5):
+                blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file,
+                lut_intensity=0.5, use_gpu=False):
     """Process all images in the input directory and save results to output directory"""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -493,8 +692,8 @@ def process_batch(input_dir, output_dir, color_noise, mono_noise, gauss_noise, d
             
             # Process image
             result = process_image(img, color_noise, mono_noise, gauss_noise, digital_grain,
-                                 blur_kernel, brightness, contrast, saturation, temperature, 
-                                 gamma, lut_file, lut_intensity)
+                                 blur_kernel, brightness, contrast, saturation, temperature,
+                                 gamma, lut_file, lut_intensity, use_gpu)
             
             if result is not None:
                 # Convert back to BGR for saving
@@ -570,7 +769,17 @@ def apply_preset_settings(preset_name):
 with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
     gr.Markdown("# LUTplus - Image PostProcessing Tools")
     gr.Markdown("Upload an image and apply various effects to it.")
-    
+
+    gpu_enabled, gpu_name = gpu_available()
+    gpu_status = "✅ CUDA detected: {name}".format(name=gpu_name) if gpu_enabled else "⚠️ GPU disabled ({reason})".format(reason=gpu_name)
+    use_gpu = gr.Checkbox(
+        label="Use GPU (PyTorch + CUDA)",
+        value=gpu_enabled,
+        interactive=gpu_enabled,
+        info="Enable acceleration when a CUDA-capable GPU and PyTorch are available."
+    )
+    gr.Markdown(gpu_status)
+
     with gr.Row():
         with gr.Column():
             input_image = gr.Image(label="Input Image")
@@ -615,14 +824,14 @@ with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
             
             reset_btn = gr.Button("Reset All")
     
-    def batch_process_wrapper(input_dir, output_dir, c_noise, m_noise, g_noise, d_grain, blur, bright, 
-                            cont, sat, temp, gamma, lut_file, lut_int):
+    def batch_process_wrapper(input_dir, output_dir, c_noise, m_noise, g_noise, d_grain, blur, bright,
+                            cont, sat, temp, gamma, lut_file, lut_int, use_gpu_flag):
         if not input_dir or not output_dir:
             return "Please specify both input and output directories"
         if not os.path.exists(input_dir):
             return "Input directory does not exist"
         return process_batch(input_dir, output_dir, c_noise, m_noise, g_noise, d_grain,
-                           blur, bright, cont, sat, temp, gamma, lut_file, lut_int)
+                           blur, bright, cont, sat, temp, gamma, lut_file, lut_int, use_gpu_flag)
     
     save_preset_btn.click(
         fn=save_current_settings,
@@ -654,14 +863,14 @@ with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
     process_btn.click(
         fn=process_image,
         inputs=[input_image, color_noise, mono_noise, gauss_noise, digital_grain,
-                blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity],
+                blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity, use_gpu],
         outputs=output_image
     )
-    
+
     process_batch_btn.click(
         fn=batch_process_wrapper,
         inputs=[input_dir, output_dir, color_noise, mono_noise, gauss_noise, digital_grain,
-                blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity],
+                blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity, use_gpu],
         outputs=batch_result
     )
 
