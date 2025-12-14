@@ -590,7 +590,7 @@ with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
                 blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity],
         outputs=output_image
     )
-    
+
     process_batch_btn.click(
         fn=batch_process_wrapper,
         inputs=[input_dir, output_dir, color_noise, mono_noise, gauss_noise, digital_grain,
@@ -598,78 +598,68 @@ with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
         outputs=batch_result
     )
 
-if __name__ == "__main__":
+
+def get_local_ip_address():
+    """Return a best-guess LAN IP address or an informative fallback string."""
+    possible_ips = []
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            possible_ips.append(sock.getsockname()[0])
+    except Exception:
+        pass
+
+    if not possible_ips:
+        try:
+            hostname = socket.gethostname()
+            ips = socket.getaddrinfo(hostname, None)
+            for ip in ips:
+                if ip[0] == socket.AF_INET:
+                    addr = ip[4][0]
+                    if not addr.startswith('127.'):
+                        possible_ips.append(addr)
+        except Exception:
+            pass
+
+    if not possible_ips:
+        return "unknown (check your network)"
+
+    for ip in possible_ips:
+        if ip.startswith('192.168.') or ip.startswith('10.'):
+            return ip
+
+    return possible_ips[0]
+
+
+def main():
     print("\nLUTplus is starting...")
-    
-    # Check for --network argument
+
     is_network_mode = "--network" in sys.argv
     server_ip = "0.0.0.0" if is_network_mode else "127.0.0.1"
-    
+
     if is_network_mode:
         try:
-            # Better method to get local IP address
-            import socket
-            def get_local_ip():
-                # Get all network interfaces that might be accessible from other devices
-                possible_ips = []
-                
-                # Try to get a list of all network interfaces
-                try:
-                    # Create a socket that connects to an external address
-                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    # This doesn't actually send any packets
-                    s.connect(("8.8.8.8", 80))
-                    # Get the IP address used for this connection
-                    local_ip = s.getsockname()[0]
-                    s.close()
-                    possible_ips.append(local_ip)
-                except:
-                    pass
-                
-                # If the above method failed, try listing all interfaces
-                if not possible_ips:
-                    try:
-                        hostname = socket.gethostname()
-                        # Get all IPs for this hostname
-                        ips = socket.getaddrinfo(hostname, None)
-                        for ip in ips:
-                            if ip[0] == socket.AF_INET:  # Only IPv4 addresses
-                                addr = ip[4][0]
-                                # Skip localhost
-                                if not addr.startswith('127.'):
-                                    possible_ips.append(addr)
-                    except:
-                        pass
-                
-                # If we still don't have any IPs, return a message
-                if not possible_ips:
-                    return "unknown (check your network)"
-                
-                # Prefer 192.168.x.x or 10.x.x.x addresses (common for LANs)
-                for ip in possible_ips:
-                    if ip.startswith('192.168.') or ip.startswith('10.'):
-                        return ip
-                
-                # Otherwise just return the first IP
-                return possible_ips[0]
-            
-            local_ip = get_local_ip()
+            local_ip = get_local_ip_address()
             print(f"Network mode enabled. Access from local network: http://{local_ip}:7860")
-        except:
+        except Exception:
             print("Network mode enabled. Application will be accessible from your local network.")
-    
+
     try:
-        # Launch the application
         demo.launch(
-            quiet=True,  # Disable Gradio messages, including version warning
+            quiet=True,
             show_error=True,
             show_api=False,
-            server_name=server_ip,  # Use 0.0.0.0 for network access or 127.0.0.1 for local only
-            inbrowser=True,  # Enable automatic browser launch
-            share=False  # Disable public URL
+            server_name=server_ip,
+            inbrowser=True,
+            share=False
         )
     except Exception as e:
         print(f"\nError: {str(e)}")
         print("Please try again.")
         input("Press Enter to exit...")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
