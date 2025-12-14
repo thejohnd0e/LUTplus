@@ -497,7 +497,8 @@ def apply_preset_settings(preset_name):
             settings.get('gamma', 1.0),
             settings.get('lut_intensity', 0.5)
         ]
-    return [0, 0, 0, 0, 1, 1.0, 1.0, 1.0, 1.0, 0, 1.0, 0.5]
+    # Default values matching the expected control order
+    return [0, 0, 0, 0, 1, 1.0, 1.0, 1.0, 0, 1.0, 0.5]
 
 # Create Gradio interface
 with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
