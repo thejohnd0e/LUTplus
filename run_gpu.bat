@@ -1,0 +1,141 @@
+@echo off
+echo LUTplus - Image Processing Tool (GPU Mode)
+echo ==============================================
+
+REM Check for network mode argument
+set NETWORK_MODE=
+if "%1"=="--network" set NETWORK_MODE=--network
+
+REM Check if Python is installed
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo Python is not installed! Please install Python 3.9 or higher.
+    pause
+    exit /b 1
+)
+
+REM Check Python version for compatibility
+for /f "tokens=2" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
+echo Detected Python version: %PYTHON_VERSION%
+
+for /f "tokens=1,2 delims=." %%a in ("%PYTHON_VERSION%") do (
+    set PYTHON_MAJOR=%%a
+    set PYTHON_MINOR=%%b
+)
+
+REM Check if using Python 3.13 or higher (not compatible)
+if %PYTHON_MAJOR% EQU 3 (
+    if %PYTHON_MINOR% GEQ 13 (
+        echo ERROR: Python %PYTHON_VERSION% is not compatible with LUTplus.
+        echo NumPy 1.x packages required by LUTplus are not available for Python 3.13+.
+        echo Please install Python 3.12.x instead.
+        echo See README.md for more information on compatibility.
+        pause
+        exit /b 1
+    )
+)
+
+REM Check if virtual environment exists
+if not exist venv (
+    echo Creating virtual environment...
+    python -m venv venv
+    if errorlevel 1 (
+        echo Failed to create virtual environment!
+        pause
+        exit /b 1
+    )
+)
+
+REM Activate virtual environment
+echo Activating virtual environment...
+call venv\Scripts\activate.bat
+if errorlevel 1 (
+    echo Failed to activate virtual environment!
+    pause
+    exit /b 1
+)
+
+REM Update pip
+echo Updating pip...
+python -m pip install --upgrade pip
+if errorlevel 1 (
+    echo Failed to update pip!
+    pause
+    exit /b 1
+)
+
+REM Install requirements
+echo Installing required packages...
+echo Trying primary packages...
+
+REM Try primary installation
+python -m pip install gradio==4.19.2 numpy==1.26.4 opencv-python==4.9.0.80 Pillow==10.2.0 colour-science==0.4.6 huggingface-hub==0.20.0 --only-binary=:all: --no-cache-dir
+if errorlevel 1 (
+    echo Primary installation failed. Trying with more compatible versions...
+    
+    REM Try fallback installation
+    python -m pip install gradio==4.19.2 numpy==1.24.3 opencv-python==4.8.1.78 Pillow==10.0.0 colour-science==0.4.2 --only-binary=:all: --no-cache-dir
+    if errorlevel 1 (
+        echo Fallback installation failed. Trying minimal compatible versions...
+        
+        REM Try minimal compatible installation
+        python -m pip install gradio==3.50.2 numpy==1.21.6 opencv-python==4.7.0.72 Pillow==9.5.0 colour-science==0.4.1 --only-binary=:all: --no-cache-dir
+        if errorlevel 1 (
+            echo Failed to install packages after multiple attempts!
+            echo Trying to install from requirements_compatible.txt file...
+            
+            REM Last attempt - try to install from the requirements file
+            if exist requirements_compatible.txt (
+                python -m pip install -r requirements_compatible.txt --only-binary=:all: --no-cache-dir
+                if errorlevel 1 (
+                    echo All installation attempts failed!
+                    echo Please try running manual_install.bat or install packages manually.
+                    pause
+                    exit /b 1
+                )
+            ) else (
+                echo All installation attempts failed!
+                echo Please install packages manually.
+                pause
+                exit /b 1
+            )
+        )
+    )
+)
+
+REM Install CuPy for GPU support
+echo.
+echo Installing GPU support (CuPy)...
+echo Trying CuPy for CUDA 12.x...
+python -m pip install cupy-cuda12x --no-cache-dir
+if errorlevel 1 (
+    echo CuPy for CUDA 12.x failed. Trying CUDA 11.x...
+    python -m pip install cupy-cuda11x --no-cache-dir
+    if errorlevel 1 (
+        echo CuPy installation failed. GPU acceleration will not be available.
+        echo Make sure you have NVIDIA GPU with CUDA installed.
+        echo You can continue without GPU support, but processing will be slower.
+        pause
+    ) else (
+        echo CuPy for CUDA 11.x installed successfully!
+    )
+) else (
+    echo CuPy for CUDA 12.x installed successfully!
+)
+
+REM Launch the application with GPU flag
+echo.
+echo Starting LUTplus with GPU acceleration...
+if defined NETWORK_MODE (
+    echo Network mode enabled. Application will be accessible from your local network.
+    python app.py --gpu --network
+) else (
+    python app.py --gpu
+)
+
+REM Keep the window open if there's an error
+if errorlevel 1 (
+    echo Application failed to start!
+    pause
+)
+
