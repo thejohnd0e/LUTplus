@@ -2,9 +2,13 @@
 echo LUTplus - Image Processing Tool
 echo ==============================================
 
-REM Check for network mode argument
+REM Check for arguments
 set NETWORK_MODE=
-if "%1"=="--network" set NETWORK_MODE=--network
+set GPU_MODE=
+for %%A in (%*) do (
+    if "%%A"=="--network" set NETWORK_MODE=--network
+    if "%%A"=="--gpu" set GPU_MODE=--gpu
+)
 
 REM Check if Python is installed
 python --version >nul 2>&1
@@ -107,9 +111,9 @@ REM Launch the application
 echo Starting LUTplus...
 if defined NETWORK_MODE (
     echo Network mode enabled. Application will be accessible from your local network.
-    python app.py --network
+    python app.py %NETWORK_MODE% %GPU_MODE%
 ) else (
-    python app.py
+    python app.py %GPU_MODE%
 )
 
 REM Keep the window open if there's an error
