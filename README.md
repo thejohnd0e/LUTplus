@@ -43,6 +43,10 @@ For best results, we recommend using Python 3.12.x for maximum compatibility and
   - Adjustable LUT intensity
   - Professional-grade color grading
 
+- **GPU Acceleration (Optional):**
+  - Enable CUDA acceleration when PyTorch with CUDA wheels is installed
+  - Falls back to CPU automatically when GPU is unavailable
+
 - **Batch Processing:**
   - Process multiple images at once
   - Preserve original file names
@@ -80,6 +84,8 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
+
+> **GPU Acceleration:** To enable CUDA processing, install the appropriate PyTorch build for your GPU before launching the app. Example for CUDA 12.1 on Windows: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121`. The interface automatically falls back to CPU if PyTorch or CUDA is unavailable.
 
 ## Usage
 
