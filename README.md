@@ -124,6 +124,7 @@ http://[your-ip-address]:7860  # For network mode
 - NumPy
 - Gradio
 - Pillow
+- huggingface-hub 0.23.5 (newer releases remove `HfFolder`, which Gradio depends on)
 
 See `requirements.txt` for complete list of dependencies.
 
