@@ -25,6 +25,17 @@ os.environ["GRADIO_TELEMETRY_ENABLED"] = "False"
 # Prevent Gradio version check
 os.environ["GRADIO_SKIP_VERSION_CHECK"] = "True"
 
+
+def _is_gpu_available():
+    """Check if OpenCV has CUDA support enabled."""
+    try:
+        return hasattr(cv2, "cuda") and cv2.cuda.getCudaEnabledDeviceCount() > 0
+    except Exception:
+        return False
+
+
+GPU_ENABLED = False
+
 # Pydantic compatibility fix
 try:
     import pydantic
@@ -115,6 +126,7 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+logger = logging.getLogger("lutplus")
 
 # Disable only Gradio's internal logging
 logging.getLogger('gradio').setLevel(logging.WARNING)
@@ -220,8 +232,27 @@ def apply_gaussian_blur(image, kernel_size):
     kernel_size = max(3, kernel_size)
     if kernel_size % 2 == 0:
         kernel_size += 1
-        
+    if GPU_ENABLED:
+        try:
+            return apply_gaussian_blur_gpu(image, kernel_size)
+        except Exception as exc:
+            logger.warning(f"GPU blur failed, falling back to CPU: {exc}")
+
     return cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
+
+
+def apply_gaussian_blur_gpu(image, kernel_size):
+    """Apply Gaussian blur using CUDA if available."""
+    gpu_image = cv2.cuda_GpuMat()
+    gpu_image.upload(image)
+    gaussian = cv2.cuda.createGaussianFilter(
+        gpu_image.type(),
+        gpu_image.type(),
+        (kernel_size, kernel_size),
+        0
+    )
+    blurred_gpu = gaussian.apply(gpu_image)
+    return blurred_gpu.download()
 
 def adjust_brightness(image, factor):
     if image is None:
@@ -653,7 +684,9 @@ def process_batch(input_dir, output_dir, color_noise, mono_noise, gauss_noise, d
             img = cv2.imread(img_path)
             if img is None:
                 continue
-            
+
+            logger.info(f"Processing file: {filename}")
+
             # Convert from BGR to RGB
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             
@@ -669,9 +702,10 @@ def process_batch(input_dir, output_dir, color_noise, mono_noise, gauss_noise, d
                 output_path = os.path.join(output_dir, filename)
                 cv2.imwrite(output_path, result)
                 processed_count += 1
-                
+                logger.info(f"Finished file: {filename} -> {output_path}")
+
         except Exception as e:
-            print(f"Error processing {filename}: {str(e)}")
+            logger.error(f"Error processing {filename}: {str(e)}")
             continue
     
     return f"Processed {processed_count} of {len(image_files)} images"
@@ -714,7 +748,20 @@ def apply_preset_settings(preset_name):
             settings.get('gamma', 1.0),
             settings.get('lut_intensity', 0.5)
         ]
-    return [0, 0, 0, 0, 1, 1.0, 1.0, 1.0, 1.0, 0, 1.0, 0.5]
+    # Fallback to default control values when no preset is selected
+    return [
+        0,      # color_noise
+        0,      # mono_noise
+        0,      # gauss_noise
+        0,      # digital_grain
+        1,      # blur_kernel
+        1.0,    # brightness
+        1.0,    # contrast
+        1.0,    # saturation
+        0,      # temperature
+        1.0,    # gamma
+        0.5     # lut_intensity
+    ]
 
 # Create Gradio interface
 with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
@@ -827,9 +874,16 @@ with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
 
 if __name__ == "__main__":
     print("\nLUTplus is starting...")
-    
+
     # Check for --network argument
     is_network_mode = "--network" in sys.argv
+    is_gpu_mode = "--gpu" in sys.argv
+    if is_gpu_mode:
+        GPU_ENABLED = _is_gpu_available()
+        if GPU_ENABLED:
+            logger.info("GPU mode requested: CUDA device detected and will be used where possible.")
+        else:
+            logger.warning("GPU mode requested but no CUDA-enabled OpenCV build was found. Falling back to CPU.")
     server_ip = "0.0.0.0" if is_network_mode else "127.0.0.1"
     
     if is_network_mode:

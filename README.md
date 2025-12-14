@@ -93,10 +93,12 @@ pip install -r requirements.txt
 
 **Windows Users:**
 - Use `run.bat` for local mode (accessible only on your computer)
+- Use `run_GPU.bat` to request GPU mode (requires CUDA-enabled OpenCV build)
 - Use `run_network.bat` for network mode (accessible from other devices in your local network)
 
 The difference:
 - `run.bat`: Starts the application on localhost (127.0.0.1), making it accessible only from the computer it's running on
+- `run_GPU.bat`: Starts the application on localhost with the `--gpu` flag
 - `run_network.bat`: Starts the application in network mode, making it accessible from other devices in your local network via your computer's IP address
 
 **Manual Start:**
@@ -130,6 +132,7 @@ http://[your-ip-address]:7860  # For network mode
 - NumPy
 - Gradio
 - Pillow
+- huggingface-hub 0.23.5 (newer releases remove `HfFolder`, which Gradio depends on)
 
 See `requirements.txt` for complete list of dependencies.
 
