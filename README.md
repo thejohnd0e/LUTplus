@@ -53,6 +53,12 @@ For best results, we recommend using Python 3.12.x for maximum compatibility and
   - Load saved presets
   - Quick reset to defaults
 
+- **GPU Acceleration (Optional):**
+  - NVIDIA GPU support via CuPy
+  - Significantly faster processing for large images and batch operations
+  - Automatic fallback to CPU if GPU is unavailable
+  - Supports CUDA 11.x and 12.x
+
 ## Installation
 
 1. Clone the repository:
@@ -88,15 +94,19 @@ pip install -r requirements.txt
 **Windows Users:**
 - Use `run.bat` for local mode (accessible only on your computer)
 - Use `run_network.bat` for network mode (accessible from other devices in your local network)
+- Use `run_gpu.bat` for GPU-accelerated mode (requires NVIDIA GPU with CUDA support)
 
 The difference:
 - `run.bat`: Starts the application on localhost (127.0.0.1), making it accessible only from the computer it's running on
 - `run_network.bat`: Starts the application in network mode, making it accessible from other devices in your local network via your computer's IP address
+- `run_gpu.bat`: Starts the application with GPU acceleration enabled. Automatically installs CuPy (tries CUDA 12.x first, then CUDA 11.x). Falls back to CPU mode if GPU is unavailable
 
 **Manual Start:**
 ```bash
 python app.py           # For local mode
 python app.py --network # For network mode
+python app.py --gpu     # For GPU-accelerated mode
+python app.py --gpu --network  # For GPU-accelerated network mode
 ```
 
 2. Open your web browser and navigate to:
@@ -119,13 +129,23 @@ http://[your-ip-address]:7860  # For network mode
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.9+ (3.12.x recommended)
 - OpenCV
 - NumPy
 - Gradio
 - Pillow
 
+**Optional (for GPU acceleration):**
+- CuPy (cupy-cuda12x or cupy-cuda11x)
+- NVIDIA GPU with CUDA support
+
 See `requirements.txt` for complete list of dependencies.
+
+**Note:** GPU acceleration is optional. The application will work perfectly fine on CPU-only systems. GPU acceleration provides significant performance improvements, especially for:
+- Large resolution images
+- Batch processing multiple images
+- Complex LUT operations
+- Multiple noise effects applied simultaneously
 
 ## Project Structure
 
@@ -133,9 +153,12 @@ See `requirements.txt` for complete list of dependencies.
 LUTplus/
 ├── app.py              # Main application file
 ├── requirements.txt    # Project dependencies
-├── presets.json       # Saved presets (created on first use)
-├── screenshots/       # Application screenshots
-└── README.md         # Project documentation
+├── run.bat             # Windows launcher (CPU mode)
+├── run_network.bat      # Windows launcher (network mode)
+├── run_gpu.bat          # Windows launcher (GPU mode)
+├── presets.json         # Saved presets (created on first use)
+├── screenshots/         # Application screenshots
+└── README.md           # Project documentation
 ```
 
 ## Contributing
@@ -155,6 +178,33 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - OpenCV team for image processing capabilities
 - Gradio team for the web interface framework
 - All contributors and users of LUTplus
+
+## GPU Acceleration
+
+LUTplus now supports GPU acceleration through CuPy, which can significantly speed up image processing operations. 
+
+### Requirements for GPU Mode:
+- NVIDIA GPU with CUDA support
+- CUDA 11.x or 12.x installed
+- CuPy library (automatically installed by `run_gpu.bat`)
+
+### Performance Benefits:
+GPU acceleration is most beneficial for:
+- **Large images** (4K and above)
+- **Batch processing** (processing multiple images)
+- **Complex LUT operations** (3D LUT interpolation)
+- **Multiple effects** applied simultaneously
+
+### How to Use:
+1. Ensure you have an NVIDIA GPU with CUDA installed
+2. Run `run_gpu.bat` instead of `run.bat`
+3. The application will automatically detect and use your GPU
+4. If GPU is unavailable, it will automatically fall back to CPU mode
+
+### Troubleshooting:
+- If CuPy installation fails, make sure you have the correct CUDA version installed
+- Check your GPU compatibility: CuPy requires CUDA 11.0+ or 12.0+
+- If you see "GPU support disabled" message, the application will still work in CPU mode
 
 ## Future Plans
 
