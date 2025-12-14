@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 import os
 import logging
+import asyncio
 import json
 from pathlib import Path
 import socket
@@ -127,6 +128,14 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("lutplus")
+
+# Avoid noisy Windows proactor errors when connections close unexpectedly
+if sys.platform.startswith("win"):
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        # If the policy isn't available, proceed without changing it
+        pass
 
 # Disable only Gradio's internal logging
 logging.getLogger('gradio').setLevel(logging.WARNING)
@@ -589,6 +598,13 @@ def apply_lut(image, lut_file, intensity=1.0):
     return result
 
 def process_image(image, color_noise, mono_noise, gauss_noise, digital_grain,
+                 blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity=0.5):
+    if image is None:
+        return None
+
+    logger.info("Starting image processing")
+    result = np.array(image)
+    logger.info(f"Input image shape: {result.shape[1]}x{result.shape[0]}")
                  blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file,
                  lut_intensity=0.5, use_gpu=False):
     if image is None:
@@ -618,34 +634,48 @@ def process_image(image, color_noise, mono_noise, gauss_noise, digital_grain,
 
     # Apply different types of noise
     if color_noise > 0:
+        logger.info(f"Applying color noise: {color_noise}")
         result = apply_color_noise(result, color_noise)
     if mono_noise > 0:
+        logger.info(f"Applying monochrome noise: {mono_noise}")
         result = apply_monochrome_noise(result, mono_noise)
     if gauss_noise > 0:
+        logger.info(f"Applying gaussian noise: {gauss_noise}")
         result = apply_gaussian_noise(result, gauss_noise)
     if digital_grain > 0:
+        logger.info(f"Applying digital grain: {digital_grain}")
         result = apply_digital_grain(result, digital_grain)
 
     if blur_kernel > 1:
+        logger.info(f"Applying gaussian blur with kernel size: {blur_kernel}")
         result = apply_gaussian_blur(result, blur_kernel)
 
     if brightness != 1.0:
+        logger.info(f"Adjusting brightness: {brightness}")
         result = adjust_brightness(result, brightness)
 
     if contrast != 1.0:
+        logger.info(f"Adjusting contrast: {contrast}")
         result = adjust_contrast(result, contrast)
 
     if saturation != 1.0:
+        logger.info(f"Adjusting saturation: {saturation}")
         result = adjust_saturation(result, saturation)
 
     if temperature != 0:
+        logger.info(f"Adjusting color temperature: {temperature}")
         result = adjust_color_temperature(result, temperature)
 
     if gamma != 1.0:
+        logger.info(f"Adjusting gamma: {gamma}")
         result = adjust_gamma(result, gamma)
 
     if lut_file is not None:
+        lut_name = getattr(lut_file, 'name', str(lut_file))
+        logger.info(f"Applying LUT: {lut_name} with intensity {lut_intensity}")
         result = apply_lut(result, lut_file, lut_intensity)
+
+    logger.info("Image processing completed")
 
     return result
 
@@ -666,16 +696,20 @@ def reset_controls():
     ]
 
 def process_batch(input_dir, output_dir, color_noise, mono_noise, gauss_noise, digital_grain,
+                blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity=0.5):
                 blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file,
                 lut_intensity=0.5, use_gpu=False):
     """Process all images in the input directory and save results to output directory"""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    
+
+    logger.info(f"Starting batch processing from '{input_dir}' to '{output_dir}'")
+
     # Get list of image files
     image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
     image_files = [f for f in os.listdir(input_dir) if os.path.splitext(f.lower())[1] in image_extensions]
-    
+    logger.info(f"Found {len(image_files)} image(s) to process")
+
     processed_count = 0
     for filename in image_files:
         try:
@@ -683,13 +717,14 @@ def process_batch(input_dir, output_dir, color_noise, mono_noise, gauss_noise, d
             img_path = os.path.join(input_dir, filename)
             img = cv2.imread(img_path)
             if img is None:
+                logger.info(f"Skipping non-image file: {filename}")
                 continue
 
             logger.info(f"Processing file: {filename}")
 
             # Convert from BGR to RGB
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            
+
             # Process image
             result = process_image(img, color_noise, mono_noise, gauss_noise, digital_grain,
                                  blur_kernel, brightness, contrast, saturation, temperature,
@@ -701,6 +736,7 @@ def process_batch(input_dir, output_dir, color_noise, mono_noise, gauss_noise, d
                 # Save processed image
                 output_path = os.path.join(output_dir, filename)
                 cv2.imwrite(output_path, result)
+                logger.info(f"Processed and saved: {filename}")
                 processed_count += 1
                 logger.info(f"Finished file: {filename} -> {output_path}")
 
