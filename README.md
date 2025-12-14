@@ -43,6 +43,10 @@ For best results, we recommend using Python 3.12.x for maximum compatibility and
   - Adjustable LUT intensity
   - Professional-grade color grading
 
+- **GPU Acceleration (Optional):**
+  - Enable CUDA acceleration when PyTorch with CUDA wheels is installed
+  - Falls back to CPU automatically when GPU is unavailable
+
 - **Batch Processing:**
   - Process multiple images at once
   - Preserve original file names
@@ -81,16 +85,20 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+> **GPU Acceleration:** To enable CUDA processing, install the appropriate PyTorch build for your GPU before launching the app. Example for CUDA 12.1 on Windows: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121`. The interface automatically falls back to CPU if PyTorch or CUDA is unavailable.
+
 ## Usage
 
 1. Start the application using one of the following methods:
 
 **Windows Users:**
 - Use `run.bat` for local mode (accessible only on your computer)
+- Use `run_GPU.bat` to request GPU mode (requires CUDA-enabled OpenCV build)
 - Use `run_network.bat` for network mode (accessible from other devices in your local network)
 
 The difference:
 - `run.bat`: Starts the application on localhost (127.0.0.1), making it accessible only from the computer it's running on
+- `run_GPU.bat`: Starts the application on localhost with the `--gpu` flag
 - `run_network.bat`: Starts the application in network mode, making it accessible from other devices in your local network via your computer's IP address
 
 **Manual Start:**
@@ -124,6 +132,7 @@ http://[your-ip-address]:7860  # For network mode
 - NumPy
 - Gradio
 - Pillow
+- huggingface-hub 0.23.5 (newer releases remove `HfFolder`, which Gradio depends on)
 
 See `requirements.txt` for complete list of dependencies.
 
