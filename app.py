@@ -801,6 +801,8 @@ def apply_preset_settings(preset_name):
         0.5     # lut_intensity
     ]
 
+def build_demo():
+    """Create the Gradio interface for LUTplus."""
 # Create Gradio interface
 with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
     gr.Markdown("# LUTplus - Image PostProcessing Tools")
@@ -910,7 +912,108 @@ with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
         outputs=batch_result
     )
 
-if __name__ == "__main__":
+    with gr.Blocks(title="LUTplus - Image PostProcessing Tools") as demo:
+        gr.Markdown("# LUTplus - Image PostProcessing Tools")
+        gr.Markdown("Upload an image and apply various effects to it.")
+
+        with gr.Row():
+            with gr.Column():
+                input_image = gr.Image(label="Input Image")
+
+                with gr.Accordion("Main Effects", open=True):
+                    blur_kernel = gr.Slider(minimum=1, maximum=31, value=1, step=2, label="Blur")
+                    brightness = gr.Slider(minimum=0.0, maximum=2.0, value=1.0, step=0.1, label="Brightness")
+                    contrast = gr.Slider(minimum=0.0, maximum=2.0, value=1.0, step=0.1, label="Contrast")
+                    saturation = gr.Slider(minimum=0.0, maximum=2.0, value=1.0, step=0.1, label="Saturation")
+                    temperature = gr.Slider(minimum=-100, maximum=100, value=0, step=1, label="Color Temperature")
+                    gamma = gr.Slider(minimum=0.2, maximum=5.0, value=1.0, step=0.1, label="Gamma")
+
+                with gr.Accordion("Noise Effects", open=True):
+                    color_noise = gr.Slider(minimum=0, maximum=50, value=0, step=1, label="Color Noise")
+                    mono_noise = gr.Slider(minimum=0, maximum=50, value=0, step=1, label="Monochromatic Noise")
+                    gauss_noise = gr.Slider(minimum=0, maximum=50, value=0, step=1, label="Gaussian Noise")
+                    digital_grain = gr.Slider(minimum=0, maximum=50, value=0, step=1, label="Digital Grain")
+
+            with gr.Column():
+                output_image = gr.Image(label="Output Image")
+                process_btn = gr.Button("Process Image", variant="primary")
+
+                with gr.Accordion("LUT Settings", open=True):
+                    lut_file = gr.File(label="LUT File (Optional)")
+                    lut_intensity = gr.Slider(minimum=0.0, maximum=0.5, value=0.5, step=0.025, label="LUT Intensity")
+
+                with gr.Accordion("Batch Processing", open=True):
+                    input_dir = gr.Textbox(label="Input Directory", placeholder="Path to folder with images...")
+                    output_dir = gr.Textbox(label="Output Directory", placeholder="Path to save processed images...")
+                    process_batch_btn = gr.Button("Process Batch")
+                    batch_result = gr.Textbox(label="Batch Processing Result", interactive=False)
+
+                with gr.Accordion("Presets", open=True):
+                    with gr.Row():
+                        preset_name = gr.Textbox(label="Preset Name", placeholder="Enter preset name...")
+                        save_preset_btn = gr.Button("Save Preset")
+
+                    with gr.Row():
+                        preset_dropdown = gr.Dropdown(choices=load_presets().keys(), label="Presets", value=None)
+                        apply_preset_btn = gr.Button("Apply Preset")
+                        delete_preset_btn = gr.Button("Delete Preset")
+
+                reset_btn = gr.Button("Reset All")
+
+        def batch_process_wrapper(input_dir, output_dir, c_noise, m_noise, g_noise, d_grain, blur, bright,
+                                cont, sat, temp, gamma, lut_file, lut_int):
+            if not input_dir or not output_dir:
+                return "Please specify both input and output directories"
+            if not os.path.exists(input_dir):
+                return "Input directory does not exist"
+            return process_batch(input_dir, output_dir, c_noise, m_noise, g_noise, d_grain,
+                               blur, bright, cont, sat, temp, gamma, lut_file, lut_int)
+
+        save_preset_btn.click(
+            fn=save_current_settings,
+            inputs=[preset_name, color_noise, mono_noise, gauss_noise, digital_grain,
+                    blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_intensity],
+            outputs=[preset_dropdown]
+        )
+
+        delete_preset_btn.click(
+            fn=delete_preset,
+            inputs=[preset_dropdown],
+            outputs=[preset_dropdown]
+        )
+
+        apply_preset_btn.click(
+            fn=apply_preset_settings,
+            inputs=[preset_dropdown],
+            outputs=[color_noise, mono_noise, gauss_noise, digital_grain,
+                    blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_intensity]
+        )
+
+        reset_btn.click(
+            fn=reset_controls,
+            inputs=[],
+            outputs=[color_noise, mono_noise, gauss_noise, digital_grain,
+                    blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_intensity]
+        )
+
+        process_btn.click(
+            fn=process_image,
+            inputs=[input_image, color_noise, mono_noise, gauss_noise, digital_grain,
+                    blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity],
+            outputs=output_image
+        )
+
+        process_batch_btn.click(
+            fn=batch_process_wrapper,
+            inputs=[input_dir, output_dir, color_noise, mono_noise, gauss_noise, digital_grain,
+                    blur_kernel, brightness, contrast, saturation, temperature, gamma, lut_file, lut_intensity],
+            outputs=batch_result
+        )
+
+    return demo
+
+
+def main():
     print("\nLUTplus is starting...")
 
     # Check for --network argument
@@ -923,15 +1026,14 @@ if __name__ == "__main__":
         else:
             logger.warning("GPU mode requested but no CUDA-enabled OpenCV build was found. Falling back to CPU.")
     server_ip = "0.0.0.0" if is_network_mode else "127.0.0.1"
-    
+
     if is_network_mode:
         try:
             # Better method to get local IP address
-            import socket
             def get_local_ip():
                 # Get all network interfaces that might be accessible from other devices
                 possible_ips = []
-                
+
                 # Try to get a list of all network interfaces
                 try:
                     # Create a socket that connects to an external address
@@ -942,9 +1044,9 @@ if __name__ == "__main__":
                     local_ip = s.getsockname()[0]
                     s.close()
                     possible_ips.append(local_ip)
-                except:
+                except Exception:
                     pass
-                
+
                 # If the above method failed, try listing all interfaces
                 if not possible_ips:
                     try:
@@ -957,26 +1059,28 @@ if __name__ == "__main__":
                                 # Skip localhost
                                 if not addr.startswith('127.'):
                                     possible_ips.append(addr)
-                    except:
+                    except Exception:
                         pass
-                
+
                 # If we still don't have any IPs, return a message
                 if not possible_ips:
                     return "unknown (check your network)"
-                
+
                 # Prefer 192.168.x.x or 10.x.x.x addresses (common for LANs)
                 for ip in possible_ips:
                     if ip.startswith('192.168.') or ip.startswith('10.'):
                         return ip
-                
+
                 # Otherwise just return the first IP
                 return possible_ips[0]
-            
+
             local_ip = get_local_ip()
             print(f"Network mode enabled. Access from local network: http://{local_ip}:7860")
-        except:
+        except Exception:
             print("Network mode enabled. Application will be accessible from your local network.")
-    
+
+    demo = build_demo()
+
     try:
         # Launch the application
         demo.launch(
@@ -992,3 +1096,7 @@ if __name__ == "__main__":
         print("Please try again.")
         input("Press Enter to exit...")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
